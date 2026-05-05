@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
-    "lucide-svelte": "^0.320.0", 
+    "idb-keyval": "^6.2.2",
+    "lucide-svelte": "^0.320.0",
     "svelte-sonner": "^0.3.19"
   },
   "devDependencies": {

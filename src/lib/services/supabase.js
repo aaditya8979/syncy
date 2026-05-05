@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const SURL = import.meta.env.VITE_SUPABASE_URL  || 'https://placeholder.supabase.co';
 const SKEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder';
-export const ADMIN_EMAIL = import.meta.env.VITE_SUPER_ADMIN_EMAIL || '';
+export const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL || '';
 
 export const sb = createClient(SURL, SKEY);
 
@@ -87,4 +87,30 @@ export async function joinRoomDB(roomId, userId, username) {
 
 export async function leaveRoomDB(roomId, userId) {
   try { await sb.from('room_members').delete().eq('room_id',roomId).eq('user_id',userId); } catch { /* silent */ }
+}
+
+// ── Playlists ─────────────────────────────────────────────────────────────────
+export async function insertTrackToUserPlaylist(playlistId, song) {
+  try {
+    // Strip out unsupported/deep API metadata (which causes JSONB schema errors)
+    const cleanSong = {
+      id: song.id,
+      title: song.title,
+      artist: song.artist,
+      coverUrl: song.coverUrl,
+      duration: song.duration,
+      url: song.url,
+      source: song.source || 'jiosaavn'
+    };
+    const { error } = await sb.from('playlist_tracks').insert({
+      playlist_id: playlistId,
+      song_id: song.id,
+      song_data: cleanSong
+    });
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    console.error('[Playlist Insert]', e.message);
+    return false;
+  }
 }

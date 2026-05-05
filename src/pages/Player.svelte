@@ -3,13 +3,19 @@
   import { queue, qIdx, playing, pos, dur, pct, vol, muted, shuffle, repeat,
     currentSong, buffering, togglePlay, skipNext, skipPrev, seekTo, addToQueue,
     removeFromQueue, clearQueue, playSong, getAudio } from '$lib/stores/player.js';
-  import { liked, toggleLike, page, showToast } from '$lib/stores/app.js';
+  import { liked, toggleLike, playlists, addSongToPlaylist, page, showToast, shareItem, downloadTrack } from '$lib/stores/app.js';
   import SongRow from '../components/SongRow.svelte';
+  import Lyrics from '../components/Lyrics.svelte';
 
   $: isLiked = $currentSong ? $liked.some(s => s.id === $currentSong.id) : false;
   const fmt = s => s > 0 ? `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}` : '0:00';
 
-  let showQueue = false;
+  let showQueue  = false;
+  let showLyrics = false;
+  let showMenu   = false;
+  let showMenuPL = false;
+
+  function closeMenu() { showMenu = false; showMenuPL = false; }
   $: sliderVal = $pct;
   let volVal = 85;
   $: vol.set(volVal / 100);
@@ -53,7 +59,7 @@
       if (spinSpeed <= 0) {
         discPhase = 'stopped';
         spinSpeed = 0;
-        spinAngle = 0; // FIX 2: Reset to "mean position" (upright)
+        // Bug 5 fix: do NOT reset spinAngle — disc freezes at its natural stop angle
       } else {
         spinRaf = requestAnimationFrame(animateDisc);
       }
@@ -94,6 +100,12 @@
 </script>
 
 <div class="ps" in:fly={{ y:20, duration:300 }}>
+  {#if $currentSong?.coverUrl}
+    <div class="amb-bg">
+      <img src={$currentSong.coverUrl} alt="" class="amb-img" />
+      <div class="amb-overlay"></div>
+    </div>
+  {/if}
   <header class="hdr">
     <button class="ctrl-btn" on:click={() => page.set('home')}>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
@@ -163,7 +175,65 @@
             <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
           </svg>
         </button>
+        <div style="flex:1"></div>
+        <!-- 3-dot menu -->
+        <div style="position:relative">
+          <button class="ibtn" style="width:38px;height:38px" title="More options"
+            on:click={() => { showMenu = !showMenu; showMenuPL = false; }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+              <circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/>
+            </svg>
+          </button>
+          {#if showMenu}
+            <div class="td-dropdown">
+              <button class="td-opt" on:click={() => { $currentSong && shareItem($currentSong.id, 'track'); closeMenu(); }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                <span>Share</span>
+              </button>
+              <button class="td-opt" on:click={() => { showLyrics = !showLyrics; closeMenu(); }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="8" x2="21" y2="8"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="16" x2="12" y2="16"/></svg>
+                <span>Lyrics</span>
+              </button>
+              <button class="td-opt" on:click={() => { $currentSong && downloadTrack($currentSong); closeMenu(); }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                <span>Download Offline</span>
+              </button>
+              <div class="td-divider"></div>
+              <button class="td-opt" on:click={() => showMenuPL = !showMenuPL}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span>Add to Playlist</span>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" style="margin-left:auto"><polyline points="9 18 15 12 9 6"/></svg>
+              </button>
+              {#if showMenuPL}
+                <div class="td-sub">
+                  {#if $playlists.length === 0}
+                    <div style="padding:8px 14px;font-size:12px;color:var(--t3)">No playlists yet</div>
+                  {:else}
+                    {#each $playlists as pl}
+                      <button class="td-opt" on:click={() => { addSongToPlaylist(pl.id, $currentSong); showToast(`Added to "${pl.name}"`); closeMenu(); }}>
+                        <span>{pl.name}</span>
+                        <span style="font-family:var(--fm);font-size:10px;color:var(--t3);margin-left:auto">{pl.songs.length}</span>
+                      </button>
+                    {/each}
+                  {/if}
+                </div>
+              {/if}
+              <button class="td-opt" on:click={() => { $currentSong && addToQueue($currentSong); showToast('Added to queue'); closeMenu(); }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                <span>Add to Queue</span>
+              </button>
+              <div class="td-divider"></div>
+              <button class="td-opt" class:liked={isLiked} on:click={() => { $currentSong && toggleLike($currentSong); showToast(isLiked?'Removed from favourites':'Added to favourites'); closeMenu(); }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill={isLiked?'currentColor':'none'} stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                <span>{isLiked ? 'Remove from Favourites' : 'Add to Favourites'}</span>
+              </button>
+            </div>
+          {/if}
+        </div>
       </div>
+      {#if showMenu}
+        <div style="position:fixed;inset:0;z-index:48" on:click={closeMenu} role="button" tabindex="-1" on:keydown={() => {}}></div>
+      {/if}
 
       <div class="seek-area">
         <input type="range" min="0" max="100" step="0.1" value={sliderVal}
@@ -229,6 +299,11 @@
         <span style="font-family:var(--fm);font-size:10px;color:var(--t3);width:28px;text-align:right">{volVal}</span>
       </div>
 
+      <div style="height: 8px"></div>
+      {#if $currentSong}
+        <Lyrics songId={$currentSong.id} onClose={() => {}} />
+      {/if}
+
     </div>
 
   {:else}
@@ -250,8 +325,6 @@
             <SongRow {song} index={i+1} context="queue"
               on:play={() => { qIdx.set(i); playSong(song); }}
               on:remove={() => removeFromQueue(i)}
-              on:like={() => toggleLike(song)}
-              on:download={() => {}} on:addtopl={() => {}}
             />
           {/each}
         {/if}
@@ -261,8 +334,13 @@
 </div>
 
 <style>
-  .ps { height:100%;display:flex;flex-direction:column;overflow:hidden;background:var(--bg0); }
-  .player-body { flex:1;overflow-y:auto;padding:8px 20px 20px;display:flex;flex-direction:column;align-items:center;gap:14px; }
+  .ps { height:100%;display:flex;flex-direction:column;overflow:hidden;position:relative;background:transparent; }
+  .player-body { flex:1;overflow-y:auto;padding:8px 20px 20px;display:flex;flex-direction:column;align-items:center;gap:14px;position:relative;z-index:1; }
+  /* Cinematic ambient background */
+  .amb-bg { position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none; }
+  .amb-img { position:absolute;width:160%;height:160%;top:-30%;left:-30%;object-fit:cover;filter:blur(40px) brightness(.35) saturate(1.4);animation:ambPan 28s ease-in-out infinite alternate;will-change:transform; }
+  @keyframes ambPan { from{transform:scale(1) translate(0,0)} to{transform:scale(1.14) translate(6%,-7%)} }
+  .amb-overlay { position:absolute;inset:0;background:linear-gradient(to bottom,rgba(5,5,14,.7) 0%,rgba(5,5,14,.2) 45%,rgba(5,5,14,.92) 100%); }
 
   /* ── VINYL DISC ─────────────────────────────────── */
   .art-outer {
@@ -353,4 +431,31 @@
   .queue-panel { flex:1;display:flex;flex-direction:column;overflow:hidden; }
   .qhdr        { display:flex;align-items:center;gap:6px;padding:12px 16px;border-bottom:1px solid var(--brd); }
   .qlist       { flex:1;overflow-y:auto;padding:6px 8px; }
+
+  /* ── 3-DOT DROPDOWN ──────────────────────────── */
+  .td-dropdown {
+    position:absolute; right:0; bottom:calc(100% + 8px);
+    background:var(--bg3, #1a1a2e); border:1px solid rgba(255,255,255,.08);
+    border-radius:14px; padding:6px; z-index:55;
+    min-width:220px; max-height:380px; overflow-y:auto;
+    box-shadow:0 12px 40px rgba(0,0,0,.7), 0 0 0 1px rgba(255,255,255,.04);
+    backdrop-filter:blur(20px);
+  }
+  .td-opt {
+    display:flex; align-items:center; gap:12px;
+    width:100%; padding:11px 14px; background:none; border:none;
+    cursor:pointer; color:var(--t1, #e5e5e5); font-size:14px; font-family:var(--fn, system-ui);
+    border-radius:10px; transition:background .12s;
+    text-align:left;
+  }
+  .td-opt:hover { background:rgba(255,255,255,.06); }
+  .td-opt:active { background:rgba(255,255,255,.1); transform:scale(.97); }
+  .td-opt.liked svg { color:var(--a5, #f59e0b); }
+  .td-opt span { flex-shrink:0; }
+  .td-divider { height:1px; background:rgba(255,255,255,.06); margin:4px 8px; }
+  .td-sub {
+    margin:0 6px 4px; padding:4px; border-radius:8px;
+    background:rgba(255,255,255,.03); max-height:160px; overflow-y:auto;
+  }
+  .td-sub .td-opt { padding:8px 12px; font-size:13px; }
 </style>
