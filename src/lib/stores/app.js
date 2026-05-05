@@ -2,15 +2,27 @@
  * app.js — Auth state, navigation, library (playlists / liked / downloads), toast
  * All library data is per-user, stored in localStorage with user-scoped keys
  */
-import { writable, get } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
+import { set, get as idbGet, del } from 'idb-keyval';
+import { playNow } from '$lib/stores/player.js';
+import { getSongDetails } from '$lib/services/musicApi.js';
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 export const user        = writable(null);
 export const authLoading = writable(true);
 
-// ─── Navigation ───────────────────────────────────────────────────────────────
-// 'home' | 'search' | 'player' | 'library' | 'rooms'
-export const page = writable('home');
+// ─── Navigation / Routing ─────────────────────────────────────────────────────
+// currentView is the source of truth: { page, id?, type? }
+// 'page' is a derived store for backward compat with BottomNav, MiniPlayer, etc.
+export const currentView = writable({ page: 'home', id: null, type: null });
+export const page = {
+  subscribe: derived(currentView, $v => $v.page).subscribe,
+  set: (p) => currentView.set({ page: p, id: null, type: null }),
+  update: (fn) => currentView.update(v => ({ ...v, page: fn(v.page) })),
+};
+export function navigateTo(pg, id = null, type = null) {
+  currentView.set({ page: pg, id, type });
+}
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 export const toast = writable('');
@@ -24,7 +36,28 @@ export function showToast(msg) {
 // ─── localStorage helpers ─────────────────────────────────────────────────────
 const key = (uid, k) => `syncy:${uid}:${k}`;
 const lget = (k, fb) => { try { return JSON.parse(localStorage.getItem(k) ?? 'null') ?? fb; } catch { return fb; } };
-const lset = (k, v)  => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+const lset = (k, v) => {
+  try { localStorage.setItem(k, JSON.stringify(v)); }
+  catch (e) {
+    // Surface quota or serialization errors instead of silently dropping data
+    console.error('[Syncy/lset] localStorage write failed:', e.message);
+    try { showToast('Storage full — some data may not persist'); } catch {}
+  }
+};
+
+// Strip JioSaavn API bloat, keep only what the app needs
+function sanitizeSong(song) {
+  return {
+    id:       String(song.id ?? ''),
+    title:    song.title    ?? 'Unknown',
+    artist:   song.artist   ?? 'Unknown Artist',
+    album:    song.album    ?? '',
+    coverUrl: song.coverUrl ?? '',
+    duration: song.duration ?? 0,
+    url:      song.url      ?? '',
+    source:   song.source   ?? 'jiosaavn',
+  };
+}
 
 // ─── Library stores ───────────────────────────────────────────────────────────
 export const liked     = writable([]);
@@ -40,8 +73,11 @@ export function initLibrary(uid) {
 // ─── Liked songs ──────────────────────────────────────────────────────────────
 export function toggleLike(song) {
   const uid = get(user)?.id; if (!uid) return;
+  const clean = sanitizeSong(song);
   liked.update(l => {
-    const next = l.find(s => s.id === song.id) ? l.filter(s => s.id !== song.id) : [song, ...l];
+    const next = l.find(s => String(s.id) === String(clean.id))
+      ? l.filter(s => String(s.id) !== String(clean.id))
+      : [clean, ...l];
     lset(key(uid,'liked'), next);
     return next;
   });
@@ -66,16 +102,30 @@ export function renamePlaylist(id, name) {
   playlists.update(ps => { const n=ps.map(p=>p.id===id?{...p,name}:p); lset(key(uid,'playlists'),n); return n; });
 }
 
-export function addSongToPlaylist(pid, song) {
-  const uid = get(user)?.id; if (!uid) return;
+export async function addSongToPlaylist(pid, song) {
+  const uid = get(user)?.id; if (!uid) return false;
+  
+  // Resolve full details if URL is missing (e.g. from search all)
+  let targetSong = song;
+  if (!song.url && String(song.id).startsWith('jio-')) {
+    const full = await getSongDetails(song.id);
+    if (full) targetSong = full;
+  }
+  
+  const clean = sanitizeSong(targetSong);
+  let wasAdded = false;
+
   playlists.update(ps => {
     const n = ps.map(p => {
       if (p.id !== pid) return p;
-      if (p.songs.find(s => s.id === song.id)) return p;
-      return { ...p, songs: [...p.songs, song] };
+      if (p.songs.find(s => String(s.id) === String(clean.id))) return p;
+      wasAdded = true;
+      return { ...p, songs: [...p.songs, clean] };
     });
-    lset(key(uid,'playlists'), n); return n;
+    if (wasAdded) lset(key(uid,'playlists'), n);
+    return n;
   });
+  return wasAdded;
 }
 
 export function removeSongFromPlaylist(pid, songId) {
@@ -87,46 +137,66 @@ export function removeSongFromPlaylist(pid, songId) {
 }
 
 // ─── Downloads / offline ──────────────────────────────────────────────────────
-export function addDownload(song) {
+export async function downloadTrack(song) {
   const uid = get(user)?.id; if (!uid) return;
-  downloads.update(d => {
-    const n = { ...d, [song.id]: { ...song, cachedAt: Date.now() } };
-    lset(key(uid,'downloads'), n); return n;
-  });
-  // Tell SW to cache the audio
-  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-    navigator.serviceWorker.controller.postMessage({ type: 'CACHE', url: song.url, id: song.id });
+  showToast(`Downloading "${song.title}"...`);
+  try {
+    const res = await fetch(song.url);
+    if (!res.ok) throw new Error('Download failed');
+    const blob = await res.blob();
+    await set(`audio_blob_${song.id}`, blob);
+    
+    downloads.update(d => {
+      const n = { ...d, [song.id]: { ...song, cachedAt: Date.now() } };
+      lset(key(uid,'downloads'), n); return n;
+    });
+    showToast(`Downloaded "${song.title}"`);
+  } catch (e) {
+    showToast(`Failed to download: ${e.message}`);
   }
 }
 
-export function removeDownload(songId) {
+export async function removeDownload(songId) {
   const uid = get(user)?.id; if (!uid) return;
-  downloads.update(d => {
-    if (d[songId]) {
-      navigator.serviceWorker?.controller?.postMessage({ type: 'UNCACHE', url: d[songId].url });
-    }
-    const n = { ...d }; delete n[songId]; lset(key(uid,'downloads'),n); return n;
-  });
+  try {
+    await del(`audio_blob_${songId}`);
+    downloads.update(d => {
+      const n = { ...d }; delete n[songId]; lset(key(uid,'downloads'),n); return n;
+    });
+    showToast('Removed from offline cache');
+  } catch (e) {
+    console.warn('Failed to delete blob', e);
+  }
 }
 
 /**
- * Play a downloaded song — resolves cached blob URL, falls back to direct URL.
- * This FIXES the offline play/pause not working issue.
+ * Play a downloaded song from idb-keyval.
  */
 export async function playDownload(song) {
-  const { playNow } = await import('./player.js');
-  if (!('caches' in window)) { playNow(song); return; }
   try {
-    const cache = await caches.open('syncy-audio-v1');
-    const resp  = await cache.match(song.url);
-    if (resp) {
-      const blob   = await resp.blob();
+    const blob = await idbGet(`audio_blob_${song.id}`);
+    if (blob) {
       const blobUrl = URL.createObjectURL(blob);
       playNow({ ...song, url: blobUrl });
     } else {
-      playNow(song);
+      playNow(song); // fallback to network
     }
   } catch {
     playNow(song);
   }
 }
+
+// ─── Share ────────────────────────────────────────────────────────────────────
+// Uses native navigator.share on mobile; falls back to clipboard on desktop.
+export function shareItem(id, type = 'track') {
+  const url = `https://syncy.vercel.app/${type}/${id}`;
+  if (navigator.share) {
+    navigator.share({ title: 'Syncy', url }).catch(() => {});
+    showToast('Shared!');
+  } else {
+    navigator.clipboard?.writeText(url)
+      .then(() => showToast('Link copied!'))
+      .catch(() => showToast('Could not copy link'));
+  }
+}
+

@@ -1,10 +1,10 @@
 <script>
   import { fly, fade, scale } from 'svelte/transition';
-  import { backOut } from 'svelte/easing';
+  import { backOut, cubicOut } from 'svelte/easing';
   import {
     playlists, liked, downloads, toggleLike, createPlaylist,
     deletePlaylist, addSongToPlaylist, removeSongFromPlaylist,
-    addDownload, removeDownload, playDownload, showToast
+    downloadTrack, removeDownload, playDownload, showToast
   } from '$lib/stores/app.js';
   import { playNow, addToQueue } from '$lib/stores/player.js';
   import SongRow from '../components/SongRow.svelte';
@@ -53,14 +53,16 @@
       {#if openPL.songs.length === 0}
         <div style="padding:40px;text-align:center;color:var(--t3);font-size:13px">Add songs using the + button on any song.</div>
       {:else}
-        {#each openPL.songs as song, i}
-          <SongRow {song} index={i+1} context="queue"
-            on:play={e => playNow(e.detail)}
-            on:like={e => toggleLike(e.detail)}
-            on:remove={e => removeSongFromPlaylist(openPLId, e.detail.id)}
-            on:download={e => { addDownload(e.detail); showToast('Downloading'); }}
-            on:addtopl={() => {}}
-          />
+        {#each openPL.songs as song, i (song.id)}
+          <div in:fly={{ y: 10, duration: 250, easing: cubicOut, delay: i < 20 ? i*15 : 0 }}>
+            <SongRow {song} index={i+1} context="queue"
+              on:play={e => playNow(e.detail)}
+              on:like={e => toggleLike(e.detail)}
+              on:remove={e => removeSongFromPlaylist(openPLId, e.detail.id)}
+              on:download={e => { downloadTrack(e.detail); }}
+              on:addtopl={() => {}}
+            />
+          </div>
         {/each}
       {/if}
     </div>
@@ -105,8 +107,8 @@
         {#if $playlists.length === 0}
           <div style="padding:40px;text-align:center;color:var(--t3);font-size:13px">No playlists yet.</div>
         {:else}
-          {#each $playlists as pl, i}
-            <div class="pl-row" in:fly={{ y:8, duration:200, delay:i*30 }}>
+          {#each $playlists as pl, i (pl.id)}
+            <div class="pl-row" in:fly={{ y:8, duration:200, easing: cubicOut, delay: i < 20 ? i*20 : 0 }}>
               <button class="pl-main" on:click={() => openPLId=pl.id}>
                 <div class="pl-cover">
                   {#if pl.songs[0]?.coverUrl}
@@ -140,13 +142,15 @@
         {#if $liked.length === 0}
           <div style="padding:40px;text-align:center;color:var(--t3);font-size:13px">No liked songs yet.</div>
         {:else}
-          {#each $liked as song, i}
-            <SongRow {song} index={i+1}
+          {#each $liked as song, i (song.id)}
+            <div in:fly={{ y:8, duration:200, easing: cubicOut, delay: i < 20 ? i*15 : 0 }}>
+              <SongRow {song} index={i+1}
               on:play={e => playNow(e.detail)}
               on:like={e => toggleLike(e.detail)}
-              on:download={e => { addDownload(e.detail); showToast('Downloading'); }}
+              on:download={e => { downloadTrack(e.detail); }}
               on:addtopl={e => { addSongToPlaylist(e.detail.pid, e.detail.song); showToast('Added'); }}
             />
+            </div>
           {/each}
         {/if}
 
@@ -160,8 +164,8 @@
             <div style="font-size:13px;color:var(--t3)">No downloaded songs. Tap the download icon on any song.</div>
           </div>
         {:else}
-          {#each dlList as song, i}
-            <div class="dl-row" in:fly={{ y:8, duration:200, delay:i*30 }}>
+          {#each dlList as song, i (song.id)}
+            <div class="dl-row" in:fly={{ y:8, duration:200, easing: cubicOut, delay: i < 20 ? i*15 : 0 }}>
               {#if song.coverUrl}
                 <img src={song.coverUrl} alt="" class="s-thumb" />
               {:else}

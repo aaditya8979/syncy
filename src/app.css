@@ -481,3 +481,38 @@ input[type=range]::-moz-range-progress { background:var(--a5); }
 }
 .hdr-btn:hover { border-color:var(--a4); color:var(--t1); }
 
+/* ──────────────────────────────────────────
+   TOUCH TARGETS — 44×44px minimum (T1)
+   ────────────────────────────────────────── */
+.ctrl-btn {
+  background: none; border: none; cursor: pointer; color: var(--t2);
+  display: flex; align-items: center; justify-content: center;
+  min-width: 44px; min-height: 44px;
+  padding: 8px; border-radius: 50%; transition: all .13s;
+}
+.ctrl-btn:hover { color: var(--t1); background: var(--su2); }
+.ctrl-btn.on    { color: var(--a5); }
+.ctrl-btn:disabled { opacity: .3; cursor: not-allowed; }
+
+.ibtn {
+  min-width: 44px; min-height: 44px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--t3); flex-shrink: 0; transition: all .12s;
+}
+.ibtn:hover  { color: var(--t1); background: var(--su2); transform: scale(1.08); }
+.ibtn.liked  { color: var(--r5); }
+.ibtn.saved  { color: var(--g); }
+.ibtn.active { color: var(--a5); }
+
+/* ──────────────────────────────────────────
+   TACTILE :ACTIVE STATES — ALL ELEMENTS (T1)
+   ────────────────────────────────────────── */
+.ctrl-btn:active    { transform: scale(0.88); transition: transform 0.08s ease-out; color: var(--a5); }
+.ctrl-play:active   { transform: scale(0.92); transition: transform 0.08s ease-out; }
+.ibtn:active        { transform: scale(0.82); transition: transform 0.08s ease-out; }
+.song-row:active    { transform: scale(0.984); background: var(--su2); transition: transform 0.08s ease-out; }
+.bnav-btn:active    { transform: scale(0.86); transition: transform 0.08s ease-out; }
+.btn-ghost:active   { transform: scale(0.95); transition: transform 0.08s ease-out; }
+.btn-primary:active { transform: scale(0.96); transition: transform 0.08s ease-out; }
+.pl-chip:active     { transform: scale(0.95); transition: transform 0.08s ease-out; }
