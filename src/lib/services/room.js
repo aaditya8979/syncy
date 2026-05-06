@@ -31,6 +31,10 @@ let _isHost    = false;
 let _audio     = null;
 let _rafId     = null;
 let _onTerminate = null; // callback when room is force-terminated
+let _syncInterval = null; // host periodic playhead broadcast
+
+const DRIFT_THRESHOLD = 1.5; // seconds — only force-seek if drift exceeds this
+const SYNC_INTERVAL   = 4000; // ms — host broadcasts playhead every 4s
 
 // ─── Position tracking (rAF for precision) ────────────────────────────────────
 function _trackPos() {
@@ -94,7 +98,7 @@ export async function joinRoom(id, userId, username, host, onTerminate) {
     if (_isHost) return; // host is the source of truth
 
     const { action, song, pos: p, queue: q, sentAt } = payload;
-    const drift = sentAt ? (Date.now() - sentAt) / 1000 : 0;
+    const latency = sentAt ? (Date.now() - sentAt) / 1000 : 0;
 
     if (q) roomQueue.set(q);
 
@@ -103,7 +107,7 @@ export async function joinRoom(id, userId, username, host, onTerminate) {
         if (song) {
           roomSong.set(song);
           audio.src = song.url;
-          audio.currentTime = (p || 0) + drift;
+          audio.currentTime = (p || 0) + latency;
           audio.play().catch(() => {});
           roomState.set('playing');
         }
@@ -116,7 +120,7 @@ export async function joinRoom(id, userId, username, host, onTerminate) {
         break;
 
       case 'seek':
-        audio.currentTime = (p || 0) + drift;
+        audio.currentTime = (p || 0) + latency;
         roomPos.set(audio.currentTime);
         break;
 
@@ -133,7 +137,36 @@ export async function joinRoom(id, userId, username, host, onTerminate) {
       case 'queue_update':
         // queue already set above
         break;
+
+      case 'sync_playhead': {
+        // Drift compensation: only force-seek if drift > threshold
+        if (audio.paused || !p) break;
+        const truePos = p + latency;
+        const drift = Math.abs(audio.currentTime - truePos);
+        if (drift > DRIFT_THRESHOLD) {
+          audio.currentTime = truePos;
+        }
+        // Otherwise let browser audio clock run freely — no stutters
+        break;
+      }
     }
+  });
+
+  // ── BROADCAST: Guest queue requests (host receives and merges) ───────────
+  _channel.on('broadcast', { event: 'queue_request' }, ({ payload }) => {
+    if (!_isHost) return; // only host processes queue requests
+    const { song } = payload;
+    if (!song) return;
+    // Merge into queue if not duplicate, then rebroadcast
+    const q = get(roomQueue);
+    if (q.find(s => s.id === song.id)) return;
+    const next = [...q, song];
+    roomQueue.set(next);
+    _channel.send({
+      type: 'broadcast', event: 'state',
+      payload: { action: 'queue_update', queue: next, sentAt: Date.now() },
+    });
+    _persistQueue(next);
   });
 
   // ── BROADCAST: Poll events ────────────────────────────────────────────────
@@ -184,6 +217,7 @@ export async function joinRoom(id, userId, username, host, onTerminate) {
  */
 export async function leaveRoom() {
   _stopRAF();
+  _stopSync();
   if (_channel) {
     try { await _channel.untrack(); } catch {}
     try { await _channel.unsubscribe(); } catch {}
@@ -196,6 +230,22 @@ export async function leaveRoom() {
   roomState.set('idle'); roomMembers.set([]); roomQueue.set([]);
   roomSong.set(null); roomPlaying.set(false); roomPos.set(0); roomDur.set(0);
   roomPoll.set(null); isRoomHost.set(false); roomId.set(null);
+}
+
+// ── Host periodic playhead sync ─────────────────────────────────────────────
+function _startSync() {
+  _stopSync();
+  if (!_isHost) return;
+  _syncInterval = setInterval(() => {
+    if (!_channel || !_audio || _audio.paused) return;
+    _channel.send({
+      type: 'broadcast', event: 'state',
+      payload: { action: 'sync_playhead', pos: _audio.currentTime, sentAt: Date.now() },
+    });
+  }, SYNC_INTERVAL);
+}
+function _stopSync() {
+  if (_syncInterval) { clearInterval(_syncInterval); _syncInterval = null; }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -216,6 +266,9 @@ export function broadcastPlaySong(song) {
     payload: { action: 'play', song, pos: 0, queue: get(roomQueue), sentAt: Date.now() },
   });
 
+  // Start periodic playhead sync for guests
+  _startSync();
+
   // Persist current song to DB for late joiners (debounced, non-blocking)
   _persistState(song);
 }
@@ -225,6 +278,7 @@ export function broadcastPause() {
   const audio = _getAudio();
   audio.pause();
   roomState.set('paused');
+  _stopSync(); // stop periodic sync when paused
 
   _channel.send({
     type: 'broadcast', event: 'state',
@@ -237,6 +291,7 @@ export function broadcastResume() {
   const audio = _getAudio();
   audio.play().catch(() => {});
   roomState.set('playing');
+  _startSync(); // resume periodic sync
 
   _channel.send({
     type: 'broadcast', event: 'state',
@@ -276,19 +331,28 @@ export function broadcastSkipPrev() {
 
 // ── Queue Management ────────────────────────────────────────────────────────
 export function addToRoomQueue(song) {
-  roomQueue.update(q => {
-    if (q.find(s => s.id === song.id)) return q;
-    const next = [...q, song];
-    // Broadcast updated queue
-    if (_isHost && _channel) {
-      _channel.send({
-        type: 'broadcast', event: 'state',
-        payload: { action: 'queue_update', queue: next, sentAt: Date.now() },
-      });
-      _persistQueue(next);
-    }
-    return next;
-  });
+  if (_isHost) {
+    // Host: directly merge and broadcast
+    roomQueue.update(q => {
+      if (q.find(s => s.id === song.id)) return q;
+      const next = [...q, song];
+      if (_channel) {
+        _channel.send({
+          type: 'broadcast', event: 'state',
+          payload: { action: 'queue_update', queue: next, sentAt: Date.now() },
+        });
+        _persistQueue(next);
+      }
+      return next;
+    });
+  } else if (_channel) {
+    // Guest: send request to host
+    _channel.send({
+      type: 'broadcast', event: 'queue_request',
+      payload: { song, userId: _userId, sentAt: Date.now() },
+    });
+    showToast(`Requested "${song.title}" to be added`);
+  }
 }
 
 export function removeFromRoomQueue(songId) {

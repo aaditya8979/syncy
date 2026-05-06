@@ -159,7 +159,7 @@
       </div>
     {/if}
 
-    <!-- New Releases (playable songs) -->
+    <!-- New Releases (Album cards) -->
     {#if homeLoading}
       <div class="sec-hdr"><div class="skel" style="width:100px;height:12px;border-radius:4px"></div></div>
       <div class="h-row" style="margin-bottom:22px">
@@ -172,11 +172,11 @@
           <button class="sec-link" on:click={() => page.set('search')}>See all →</button>
         </div>
         <div class="h-row">
-          {#each newReleases as item}
-            <button class="h-card" on:click={() => playItem(item)}>
-              <div class="h-art">{#if item.coverUrl}<img src={item.coverUrl} alt="" />{/if}</div>
-              <div class="h-card-title">{item.title}</div>
-              <div class="h-card-sub">{item.artist}</div>
+          {#each newReleases as album}
+            <button class="h-card" on:click={() => navigateTo('collection', album.id, 'albums')}>
+              <div class="h-art">{#if album.coverUrl}<img src={album.coverUrl} alt="" />{/if}</div>
+              <div class="h-card-title">{album.title}</div>
+              <div class="h-card-sub">{album.artist}{#if album.year} · {album.year}{/if}</div>
             </button>
           {/each}
         </div>

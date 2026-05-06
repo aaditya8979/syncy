@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { fly, fade } from 'svelte/transition';
   import { getCollection } from '$lib/services/musicApi.js';
-  import { page, showToast, shareItem, downloadTrack } from '$lib/stores/app.js';
+  import { page, showToast, shareItem, downloadTrack, navigateBack } from '$lib/stores/app.js';
   import { queue, qIdx, playSong } from '$lib/stores/player.js';
   import SongRow from '../components/SongRow.svelte';
 
@@ -19,7 +19,7 @@
 
   async function loadCollection(id, type) {
     loading = true;
-    visibleCount = 30;
+    visibleCount = 50;
     collection = await getCollection(type, id);
     loading = false;
   }
@@ -46,7 +46,7 @@
   }
 
   function loadMore() {
-    visibleCount += 30;
+    visibleCount += 50;
   }
 
   function doShare() {
@@ -77,7 +77,7 @@
     <div class="coll-loading" style="color:var(--t3)">Collection not found</div>
   {:else}
     <div class="coll-header" in:fade={{ duration: 300 }}>
-      <button class="back-btn" on:click={() => page.set('home')}>
+      <button class="back-btn" on:click={navigateBack}>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
       </button>
 

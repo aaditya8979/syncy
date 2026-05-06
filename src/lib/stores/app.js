@@ -11,17 +11,46 @@ import { getSongDetails } from '$lib/services/musicApi.js';
 export const user        = writable(null);
 export const authLoading = writable(true);
 
-// ─── Navigation / Routing ─────────────────────────────────────────────────────
-// currentView is the source of truth: { page, id?, type? }
-// 'page' is a derived store for backward compat with BottomNav, MiniPlayer, etc.
+// ─── Navigation / Routing (with history) ──────────────────────────────────────
 export const currentView = writable({ page: 'home', id: null, type: null });
+export const viewHistory = writable([]);
+
 export const page = {
   subscribe: derived(currentView, $v => $v.page).subscribe,
-  set: (p) => currentView.set({ page: p, id: null, type: null }),
-  update: (fn) => currentView.update(v => ({ ...v, page: fn(v.page) })),
+  set: (p) => {
+    const cur = get(currentView);
+    if (cur.page !== p) {
+      viewHistory.update(h => [...h, cur]);
+      currentView.set({ page: p, id: null, type: null });
+    }
+  },
+  update: (fn) => {
+    const cur = get(currentView);
+    const nxtPage = fn(cur.page);
+    if (cur.page !== nxtPage) {
+      viewHistory.update(h => [...h, cur]);
+      currentView.update(v => ({ ...v, page: nxtPage }));
+    }
+  },
 };
+
 export function navigateTo(pg, id = null, type = null) {
-  currentView.set({ page: pg, id, type });
+  const cur = get(currentView);
+  if (cur.page !== pg || cur.id !== id) {
+    viewHistory.update(h => [...h, cur]);
+    currentView.set({ page: pg, id, type });
+  }
+}
+
+export function navigateBack() {
+  const h = get(viewHistory);
+  if (h.length === 0) {
+    currentView.set({ page: 'home', id: null, type: null });
+  } else {
+    const prev = h[h.length - 1];
+    viewHistory.set(h.slice(0, -1));
+    currentView.set(prev);
+  }
 }
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
