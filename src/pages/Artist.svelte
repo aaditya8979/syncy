@@ -3,7 +3,7 @@
   import { fly, fade } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { getArtistDetails } from '$lib/services/musicApi.js';
-  import { page, showToast, navigateTo } from '$lib/stores/app.js';
+  import { page, showToast, navigateTo, navigateBack } from '$lib/stores/app.js';
   import { queue, qIdx, playing, playNow, addToQueue, playSong } from '$lib/stores/player.js';
   import SongRow from '../components/SongRow.svelte';
 
@@ -66,7 +66,7 @@
       {/if}
       <div class="hero-gradient"></div>
       <div class="hero-content">
-        <button class="back-btn" on:click={() => page.set('home')}>
+        <button class="back-btn" on:click={navigateBack}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
         </button>
         <div class="hero-meta">
@@ -123,6 +123,24 @@
     {:else}
       <div style="padding:40px;text-align:center;color:var(--t3);font-size:13px">
         No songs available for this artist
+      </div>
+    {/if}
+
+    <!-- Albums -->
+    {#if artist.albums?.length > 0}
+      <div class="albums-section" in:fly={{ y: 10, duration: 300, delay: 280 }}>
+        <h3 class="section-title">Albums</h3>
+        <div class="albums-row">
+          {#each artist.albums as album (album.id)}
+            <button class="album-card" on:click={() => navigateTo('collection', album.id, 'albums')}>
+              <div class="album-art">
+                {#if album.coverUrl}<img src={album.coverUrl} alt="" />{/if}
+              </div>
+              <div class="album-title">{album.title}</div>
+              <div class="album-year">{album.year || ''}</div>
+            </button>
+          {/each}
+        </div>
       </div>
     {/if}
 
@@ -193,5 +211,30 @@
   .section-title {
     font-family:var(--fn);font-size:18px;font-weight:700;color:var(--t1);
     padding:8px 16px 12px;
+  }
+
+  /* Albums */
+  .albums-section { padding:0 8px 16px; }
+  .albums-row {
+    display:flex;gap:12px;overflow-x:auto;padding:0 8px 8px;
+    scrollbar-width:none;-webkit-overflow-scrolling:touch;
+  }
+  .albums-row::-webkit-scrollbar { display:none; }
+  .album-card {
+    flex-shrink:0;width:130px;background:none;border:none;cursor:pointer;
+    text-align:left;padding:0;
+  }
+  .album-card:active { transform:scale(.96); }
+  .album-art {
+    width:130px;height:130px;border-radius:12px;background:var(--su2);
+    overflow:hidden;margin-bottom:8px;
+  }
+  .album-art img { width:100%;height:100%;object-fit:cover; }
+  .album-title {
+    font-size:12.5px;font-weight:600;color:var(--t1);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .album-year {
+    font-size:11px;color:var(--t3);margin-top:2px;
   }
 </style>

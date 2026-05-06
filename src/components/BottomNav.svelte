@@ -18,16 +18,31 @@
   $: indLeft   = activeIdx >= 0 ? `${activeIdx * (100/N)}%` : '0%';
   $: indWidth  = `${100/N}%`;
 
-  // ── Swipe between tabs ──────────────────────────────────────────────────
-  let touchX = 0, touchY = 0;
+  // ── Swipe between tabs (disabled on horizontal scroll containers) ──────
+  let touchX = 0, touchY = 0, swipeBlocked = false;
+
+  function isInsideHorizontalScroller(el) {
+    while (el && el !== document.body) {
+      const style = getComputedStyle(el);
+      const ox = style.overflowX;
+      if ((ox === 'auto' || ox === 'scroll') && el.scrollWidth > el.clientWidth + 2) return true;
+      el = el.parentElement;
+    }
+    return false;
+  }
+
   function onTouchStart(e) {
     touchX = e.touches[0].clientX;
     touchY = e.touches[0].clientY;
+    // Block page swipe if touch started inside a horizontal scroller (carousels, .h-row etc.)
+    swipeBlocked = isInsideHorizontalScroller(e.target);
   }
   function onTouchEnd(e) {
+    if (swipeBlocked) return;
     const dx = e.changedTouches[0].clientX - touchX;
     const dy = Math.abs(e.changedTouches[0].clientY - touchY);
-    if (Math.abs(dx) < 55 || dy > Math.abs(dx) * 0.6) return;
+    // Require wider + flatter swipe to trigger page change (80px min, mostly horizontal)
+    if (Math.abs(dx) < 80 || dy > Math.abs(dx) * 0.4) return;
     const cur = TABS.findIndex(t => t.id === $page);
     if (cur < 0) return;
     const nxt = dx < 0 ? Math.min(cur+1, N-1) : Math.max(cur-1, 0);

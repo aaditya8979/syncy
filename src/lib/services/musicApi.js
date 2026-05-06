@@ -3,7 +3,7 @@
  * Handles ALL three JioSaavn response shapes observed in the wild
  */
 
-const JIOSAAVN = 'https://jiosaavn-api-privatecvc2.vercel.app';
+const JIOSAAVN = 'https://saavn.sumit.co/api';
 const JAMENDO  = 'b6747d04';
 
 function clean(s) {
@@ -146,55 +146,94 @@ export async function fetchHomeModules() {
     return { ...base, url: '' };
   }
 
+  // /modules endpoint not available — build home from parallel song, album, and playlist searches
   try {
-    const res = await fetch(
-      `${JIOSAAVN}/modules?language=hindi,english`,
-      { signal: AbortSignal.timeout(8000) }
-    );
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const raw  = await res.json();
-    const d    = raw?.data ?? raw ?? {};
+    const songQueries = [
+      'trending bollywood hits 2026',
+      'arijit singh latest',
+      'punjabi hits trending',
+      'hip hop rap trending',
+    ];
+    const albumQueries = [
+      'latest bollywood',
+      'latest punjabi',
+      'top english',
+    ];
+    const playlistQueries = [
+      'top bollywood',
+      'romantic hits',
+      'workout mix',
+    ];
+    const chartQueries = [
+      'top charts',
+      'global top 50',
+    ];
 
-    // d.albums = individual songs (type:"song") — resolve them in parallel
-    const rawSongItems = (d.albums ?? []).slice(0, 20);
-    const songPromises = rawSongItems.map(s => resolveModuleSong(s));
-    const resolvedSongs = (await Promise.allSettled(songPromises))
-      .filter(r => r.status === 'fulfilled' && r.value.url && r.value.title)
-      .map(r => r.value);
+    const [songResults, albumResults, playlistResults, chartResults] = await Promise.all([
+      Promise.allSettled(songQueries.map(q => searchJioSaavn(q))),
+      Promise.allSettled(albumQueries.map(q => searchAlbums(q))),
+      Promise.allSettled(playlistQueries.map(q => searchPlaylists(q))),
+      Promise.allSettled(chartQueries.map(q => searchPlaylists(q))),
+    ]);
 
-    // d.trending.albums = real albums with numeric IDs
-    const realAlbums = (d.trending?.albums ?? [])
-      .slice(0, 16).map(mapAlbum).filter(a => a.title && a.id);
+    // Collect all songs, deduplicate
+    const seenSong = new Set();
+    const allSongs = [];
+    for (const r of songResults) {
+      if (r.status !== 'fulfilled') continue;
+      for (const s of r.value) {
+        if (!seenSong.has(s.id)) { seenSong.add(s.id); allSongs.push(s); }
+      }
+    }
+
+    // Collect all albums, deduplicate
+    const seenAlbum = new Set();
+    const allAlbums = [];
+    for (const r of albumResults) {
+      if (r.status !== 'fulfilled') continue;
+      for (const a of r.value) {
+        if (!seenAlbum.has(a.id)) { seenAlbum.add(a.id); allAlbums.push(a); }
+      }
+    }
+
+    // Collect all playlists, deduplicate
+    const seenPlaylist = new Set();
+    const allPlaylists = [];
+    for (const r of playlistResults) {
+      if (r.status !== 'fulfilled') continue;
+      for (const p of r.value) {
+        if (!seenPlaylist.has(p.id)) { seenPlaylist.add(p.id); allPlaylists.push(p); }
+      }
+    }
+
+    // Collect all charts, deduplicate
+    const allCharts = [];
+    for (const r of chartResults) {
+      if (r.status !== 'fulfilled') continue;
+      for (const p of r.value) {
+        if (!seenPlaylist.has(p.id)) { seenPlaylist.add(p.id); allCharts.push(p); }
+      }
+    }
+
+    const trend = allSongs.slice(0, 40).map(s => ({ ...s, type: 'song' }));
 
     return {
-      charts: (d.charts ?? []).slice(0, 15).map(mapPl).filter(p => p.title && p.id),
-      featuredPlaylists: (d.playlists ?? d.top_playlists ?? d.featured_playlists ?? [])
-        .slice(0, 16).map(mapPl).filter(p => p.title && p.id),
-      newReleases: resolvedSongs,             // playable songs
-      trendingAlbums: realAlbums,             // real album collections
-      trending: (d.trending?.songs ?? [])
-        .slice(0, 15).map(s => ({
-          id:       `jio-${s.id}`,
-          title:    clean(s.name ?? s.title ?? ''),
-          artist:   clean(s.primaryArtists?.map?.(a=>a.name)?.join(', ') ?? s.subtitle ?? ''),
-          coverUrl: bestImg(s.image),
-          url:      bestUrl(s.downloadUrl ?? s.download_url),
-          duration: parseInt(String(s.duration ?? '0'), 10) || 0,
-          source:   'jiosaavn',
-          type:     'song',
-        })).filter(s => s.title),
-      trendingStations: (d.radio ?? d.stations ?? [])
-        .slice(0, 12).map(mapSt).filter(s => s.title && s.id),
+      charts: allCharts.slice(0, 10),
+      featuredPlaylists: allPlaylists.slice(0, 16),
+      newReleases: allAlbums.slice(0, 20),   // Real album cards
+      trendingAlbums: allAlbums.slice(20, 40),
+      trending: trend,
+      trendingStations: [],
     };
   } catch (e) {
     console.warn('[JioSaavn/modules]', e.message);
-    const songs = await searchJioSaavn('trending bollywood hits 2024');
+    const songs = await searchJioSaavn('trending bollywood hits 2026');
     return {
       charts: [],
       featuredPlaylists: songs.slice(0, 8).map(s => ({ ...s, type: 'playlist', songCount: 0, subtitle: s.artist })),
-      newReleases: songs.slice(8, 16),
+      newReleases: [],
       trendingAlbums: [],
-      trending: [],
+      trending: songs.slice(8).map(s => ({ ...s, type: 'song' })),
       trendingStations: [],
     };
   }
@@ -205,7 +244,7 @@ export async function searchAll(query) {
   if (!query?.trim()) return { songs: [], artists: [], albums: [], playlists: [], topQuery: null };
   try {
     const res = await fetch(
-      `${JIOSAAVN}/search/all?query=${encodeURIComponent(query)}`,
+      `${JIOSAAVN}/search?query=${encodeURIComponent(query)}`,
       { signal: AbortSignal.timeout(6000) }
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -244,38 +283,95 @@ export async function searchAll(query) {
 export async function getArtistDetails(artistId) {
   if (!artistId) return null;
   try {
-    const [infoRes, songsRes] = await Promise.all([
-      fetch(`${JIOSAAVN}/artists?id=${artistId}`, { signal: AbortSignal.timeout(6000) }),
-      fetch(`${JIOSAAVN}/artists/${artistId}/songs`, { signal: AbortSignal.timeout(6000) }),
-    ]);
-    const infoRaw  = await infoRes.json();
-    const songsRaw = await songsRes.json();
-    const info = infoRaw?.data ?? {};
-    const songs = (songsRaw?.data?.results ?? songsRaw?.data?.songs ?? []).map(s => ({
+    const res = await fetch(`${JIOSAAVN}/artists?id=${artistId}`, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const raw = await res.json();
+    const info = raw?.data ?? {};
+
+    // topSongs & topAlbums come directly on the artist object
+    const songs = (info.topSongs ?? []).map(s => ({
       id:       `jio-${s.id}`,
       title:    clean(s.name ?? s.title ?? ''),
-      artist:   clean(s.primaryArtists ?? s.artists?.primary?.map(a=>a.name).join(', ') ?? ''),
+      artist:   clean(s.artists?.primary?.map(a => a.name).join(', ') ?? ''),
       url:      bestUrl(s.downloadUrl ?? s.download_url),
       coverUrl: bestImg(s.image),
       duration: parseInt(String(s.duration ?? '0'), 10) || 0,
       source:   'jiosaavn',
     })).filter(s => s.url && s.title);
 
+    const albums = (info.topAlbums ?? []).map(a => ({
+      id:       String(a.id ?? ''),
+      title:    clean(a.name ?? a.title ?? ''),
+      artist:   clean(a.artists?.primary?.map(x => x.name).join(', ') ?? ''),
+      coverUrl: bestImg(a.image),
+      year:     String(a.year ?? ''),
+      type:     'album',
+    })).filter(a => a.id && a.title);
+
     return {
-      id:        String(info.id ?? artistId),
-      name:      clean(info.name ?? ''),
-      coverUrl:  bestImg(info.image),
-      bio:       info.bio ?? [],
-      followerCount: info.followerCount ?? '0',
-      fanCount:  info.fanCount ?? '0',
-      isVerified: info.isVerified ?? false,
-      dominantType: info.dominantType ?? '',
-      wiki:      info.wiki ?? '',
+      id:            String(info.id ?? artistId),
+      name:          clean(info.name ?? ''),
+      coverUrl:      bestImg(info.image),
+      bio:           info.bio ?? [],
+      followerCount: info.followerCount ?? info.fanCount ?? '0',
+      fanCount:      info.fanCount ?? '0',
+      isVerified:    !!info.isVerified,
+      dominantType:  info.dominantType ?? '',
+      wiki:          info.wiki ?? '',
       songs,
+      albums,
     };
   } catch (e) {
     console.warn('[JioSaavn/artist]', e.message);
     return null;
+  }
+}
+
+// ── Search albums ────────────────────────────────────────────────────────────
+export async function searchAlbums(query) {
+  if (!query?.trim()) return [];
+  try {
+    const res = await fetch(
+      `${JIOSAAVN}/search/albums?query=${encodeURIComponent(query)}&limit=15`,
+      { signal: AbortSignal.timeout(6000) }
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const raw = await res.json();
+    return (raw?.data?.results ?? []).map(a => ({
+      id:       String(a.id ?? ''),
+      title:    clean(a.name ?? a.title ?? ''),
+      artist:   clean(a.artists?.primary?.map(x => x.name).join(', ') ?? a.description ?? ''),
+      coverUrl: bestImg(a.image),
+      year:     String(a.year ?? ''),
+      type:     'album',
+    })).filter(a => a.id && a.title);
+  } catch (e) {
+    console.warn('[JioSaavn/searchAlbums]', e.message);
+    return [];
+  }
+}
+
+// ── Search playlists ─────────────────────────────────────────────────────────
+export async function searchPlaylists(query) {
+  if (!query?.trim()) return [];
+  try {
+    const res = await fetch(
+      `${JIOSAAVN}/search/playlists?query=${encodeURIComponent(query)}&limit=15`,
+      { signal: AbortSignal.timeout(6000) }
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const raw = await res.json();
+    return (raw?.data?.results ?? []).map(p => ({
+      id:       String(p.id ?? ''),
+      title:    clean(p.name ?? p.title ?? ''),
+      subtitle: clean(p.description ?? p.language ?? ''),
+      coverUrl: bestImg(p.image),
+      songCount: parseInt(String(p.songCount ?? '0'), 10) || 0,
+      type:     'playlist',
+    })).filter(p => p.id && p.title);
+  } catch (e) {
+    console.warn('[JioSaavn/searchPlaylists]', e.message);
+    return [];
   }
 }
 
@@ -284,7 +380,7 @@ export async function getCollection(type, id) {
   if (!type || !id) return null;
   // type = 'albums' or 'playlists'
   try {
-    const res = await fetch(`${JIOSAAVN}/${type}?id=${id}`, { signal: AbortSignal.timeout(8000) });
+    const res = await fetch(`${JIOSAAVN}/${type}?id=${id}&limit=100`, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const raw = await res.json();
     const d = raw?.data ?? {};
@@ -292,7 +388,10 @@ export async function getCollection(type, id) {
     const songs = (d.songs ?? []).map(s => ({
       id:       `jio-${s.id}`,
       title:    clean(s.name ?? s.title ?? ''),
-      artist:   clean(s.primaryArtists ?? s.artists?.primary?.map(a=>a.name).join(', ') ?? ''),
+      artist:   clean(
+        s.artists?.primary?.map(a => a.name).join(', ') ??
+        s.primaryArtists ?? ''
+      ),
       url:      bestUrl(s.downloadUrl ?? s.download_url),
       coverUrl: bestImg(s.image),
       duration: parseInt(String(s.duration ?? '0'), 10) || 0,
@@ -305,10 +404,11 @@ export async function getCollection(type, id) {
       coverUrl:  bestImg(d.image),
       songCount: d.songCount ?? songs.length,
       songs,
-      // Album-specific
       year:      String(d.year ?? d.releaseDate ?? '').slice(0,4),
-      artist:    clean(d.primaryArtists ?? d.artists?.primary?.map(a=>a.name).join(', ') ?? d.firstname ?? ''),
-      // Playlist-specific
+      artist:    clean(
+        d.artists?.primary?.map(a => a.name).join(', ') ??
+        d.primaryArtists ?? d.firstname ?? ''
+      ),
       followerCount: d.followerCount ?? d.fanCount ?? '0',
       type,
     };
